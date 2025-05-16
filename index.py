@@ -209,61 +209,108 @@ def buscar_filme():
         input("\nPressione Enter para voltar ao menu principal.")
         break
 
-# Função para devolver filme
-def devolver_filme():
+# Função para alocar filme
+def alocar_filme():
     while True:
-        cliente_identificacao = input("Digite o CPF ou ID do cliente que está devolvendo o filme (ou 'V' para voltar): ")
+        cliente_identificacao = input("Digite o CPF ou ID do cliente para alocar o filme (ou 'V' para voltar): ")
         if cliente_identificacao.upper() == 'V':
             return
 
         conn = conectar()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT id FROM clientes WHERE cpf = ? OR id = ?", (cliente_identificacao, cliente_identificacao))
+        cursor.execute("SELECT id, telefone FROM clientes WHERE cpf = ? OR id = ?", (cliente_identificacao, cliente_identificacao))
         cliente = cursor.fetchone()
 
         if not cliente:
-            print("Cliente não encontrado.")
-            continue
+            print("Usuário não encontrado. Deseja tentar buscar pelo telefone?")
+            opcao_telefone = input("(S/N): ").upper()
+            if opcao_telefone == "S":
+                telefone_cliente = input("Digite o telefone do cliente: ")
+                cursor.execute("SELECT id FROM clientes WHERE telefone = ?", (telefone_cliente,))
+                cliente_telefone = cursor.fetchone()
+                if not cliente_telefone:
+                    print("Usuário não encontrado pelo telefone.")
+                    print("Deseja tentar novamente ou cadastrar um novo usuário?")
+                    opcao_novo = input("(T/C): ").upper()
+                    if opcao_novo == "C":
+                        menu_cadastros()
+                    continue
+                else:
+                    cliente_id = cliente_telefone[0]
+                    print(f"Usuário encontrado com ID: {cliente_id}. Prosseguindo com a locação.")
+                    break # Sai do loop de identificação do cliente
+            else:
+                print("Usuário não encontrado. Deseja tentar novamente ou cadastrar um novo usuário?")
+                opcao_novo = input("(T/C): ").upper()
+                if opcao_novo == "C":
+                    menu_cadastros()
+                continue
+        else:
+            cliente_id = cliente[0]
+            break # Sai do loop de identificação do cliente
 
-        cliente_id = cliente[0]
+    if cliente_id is not None:
+        while True:
+            nome_filme = input("Digite o nome do filme a ser alugado (ou 'V' para voltar): ")
+            if nome_filme.upper() == 'V':
+                return
 
-        filme_id_devolucao = input("Digite o ID do filme a ser devolvido (ou 'V' para voltar): ")
-        if filme_id_devolucao.upper() == 'V':
+            # Busca o filme pelo nome
+            cursor.execute("SELECT id, nome, quantidade FROM filmes WHERE nome LIKE ?", ('%' + nome_filme + '%',))
+            filmes_encontrados = cursor.fetchall()
+
+            if not filmes_encontrados:
+                print("Nenhum filme encontrado com esse nome.")
+                continue
+            elif len(filmes_encontrados) > 1:
+                print("Múltiplos filmes encontrados com esse nome. Por favor, seja mais específico:")
+                for filme in filmes_encontrados:
+                    # Conta quantos exemplares deste filme estão atualmente alugados
+                    cursor.execute("SELECT COUNT(*) FROM locacoes WHERE filme_id = ? AND data_devolucao IS NULL", (filme[0],))
+                    locacoes_pendentes = cursor.fetchone()[0]
+                    disponiveis = filme[2] - locacoes_pendentes
+                    status = "✅ Disponíveis" if disponiveis > 0 else "❌ Indisponível"
+                    print(f"ID: {filme[0]}, Nome: {filme[1]}, Existentes: {filme[2]}, {status} ({disponiveis})")
+                continue
+            else:
+                filme = filmes_encontrados[0]
+                filme_id = filme[0]
+                data_locacao = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                # Conta quantos exemplares deste filme estão atualmente alugados
+                cursor.execute("SELECT COUNT(*) FROM locacoes WHERE filme_id = ? AND data_devolucao IS NULL", (filme_id,))
+                locacoes_pendentes = cursor.fetchone()[0]
+                disponiveis = filme[2] - locacoes_pendentes
+
+                if disponiveis > 0:
+                    cursor.execute("INSERT INTO locacoes (cliente_id, filme_id, data_locacao) VALUES (?, ?, ?)", (cliente_id, filme_id, data_locacao))
+                    conn.commit()
+                    print(f"Filme '{filme[1]}' alocado com sucesso. Exemplares disponíveis restantes: {disponiveis - 1}")
+                    conn.close()
+                    input("\nPressione Enter para voltar ao menu principal.")
+                    return
+                else:
+                    print(f"❌ Indisponível! Não há exemplares disponíveis do filme '{filme[1]}' no momento.")
+                    continue
+    else:
+        conn.close()
+
+# Função para devolver filme
+def devolver_filme():
+    while True:
+        locacao_id = input("Digite o ID da locação a ser devolvida (ou 'V' para voltar): ")
+        if locacao_id.upper() == 'V':
             return
 
-        if not filme_id_devolucao.isdigit():
-            print("ID do filme inválido. Digite apenas números.")
-            continue
-
-        cursor.execute("SELECT id, nome FROM filmes WHERE id = ?", (filme_id_devolucao,))
-        filme = cursor.fetchone()
-
-        if not filme:
-            print("ID do filme não encontrado.")
-            continue
-
-        cursor.execute("SELECT id FROM locacoes WHERE cliente_id = ? AND filme_id = ? AND data_devolucao IS NULL", (cliente_id, filme_id_devolucao))
-        locacao = cursor.fetchone()
-
-        if not locacao:
-            print(f"Nenhum exemplar do filme '{filme[1]}' alocado para este cliente.")
-            continue
-
-        locacao_id = locacao[0]
         data_devolucao = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        print(f"\nConfirmar devolução do filme: {filme[1]}?")
-        confirmacao = input("(S/N): ").upper()
-
-        if confirmacao == 'S':
-            cursor.execute("UPDATE locacoes SET data_devolucao = ? WHERE id = ?", (data_devolucao, locacao_id))
-            conn.commit()
-            print("Filme devolvido com sucesso!")
-        else:
-            print("Devolução cancelada.")
-
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE locacoes SET data_devolucao = ? WHERE id = ?", (data_devolucao, locacao_id))
+        conn.commit()
         conn.close()
+        print("Filme devolvido com sucesso!")
         input("\nPressione Enter para voltar ao menu principal.")
         break
 
